@@ -5,7 +5,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { Vault, finalizeForUser, preparePrompt } from "./guard.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const PAGE = readFileSync(join(ROOT, "public", "index.html"), "utf8");
 const KG = { small: 0.0002, large: 0.002 };
 const BUDGET = 0.05;
 
@@ -44,6 +43,12 @@ function providerOf(env) {
   if (env.ANTHROPIC_API_KEY) return "anthropic";
   if (env.GEMINI_API_KEY) return "gemini";
   return null;
+}
+
+function providerFromKey(key) {
+  if (key.startsWith("sk-ant-")) return "anthropic";
+  if (key.startsWith("AIza")) return "gemini";
+  return "openai";
 }
 
 function modelFor(env, provider, tier) {
@@ -109,21 +114,33 @@ function sessionFor(store, sessionId) {
   return store.get(id);
 }
 
-export async function answerQuestion({ message, sessionId, store, env, fetchImpl }) {
-  const provider = providerOf(env);
-  if (!provider) {
-    return { status: 400, body: { error: "Add an API key to the .env file, then close the black window and start again." } };
-  }
+function guardBody(prepared, extra = {}) {
+  return {
+    hidden: prepared.types,
+    shortened: prepared.shortened,
+    beforeChars: prepared.beforeChars,
+    afterChars: prepared.afterChars,
+    tier: prepared.tier,
+    ...extra,
+  };
+}
+
+export async function answerQuestion({ message, sessionId, store, env, fetchImpl, apiKey }) {
   const session = sessionFor(store, sessionId);
   const prepared = preparePrompt(message, session.vault);
+  const typedKey = String(apiKey ?? "").trim();
+  const provider = typedKey ? providerFromKey(typedKey) : providerOf(env);
+  if (!provider) {
+    return { status: 200, body: guardBody(prepared, { answer: "", needsKey: true }) };
+  }
   const added = (prepared.tokens / 1000) * KG[prepared.tier];
   if (session.carbon + added > BUDGET) {
-    return { status: 403, body: { error: "This session used its energy budget. Close the window and start again." } };
+    return { status: 403, body: guardBody(prepared, { error: "This session used its energy budget. Close the window and start again." }) };
   }
   session.messages.push({ role: "user", content: prepared.text });
   session.messages = session.messages.slice(-8);
   const model = modelFor(env, provider, prepared.tier);
-  const key = env[`${provider === "openai" ? "OPENAI" : provider === "anthropic" ? "ANTHROPIC" : "GEMINI"}_API_KEY`];
+  const key = typedKey || env[`${provider === "openai" ? "OPENAI" : provider === "anthropic" ? "ANTHROPIC" : "GEMINI"}_API_KEY`];
   let modelText;
   try {
     modelText = await callModel({ provider, model, key, messages: session.messages, fetchImpl });
@@ -136,16 +153,43 @@ export async function answerQuestion({ message, sessionId, store, env, fetchImpl
   session.carbon += added;
   const answer = finalizeForUser(modelText, session.vault);
   session.messages.push({ role: "assistant", content: modelText });
+  return { status: 200, body: guardBody(prepared, { answer, model }) };
+}
+
+export async function proxyChatCompletion({ body, apiKey, env, fetchImpl }) {
+  const key = String(apiKey || env.OPENAI_API_KEY || "").trim();
+  const vault = new Vault();
+  const incoming = Array.isArray(body.messages) ? body.messages : [];
+  let meta = { hidden: [], shortened: false, beforeChars: 0, afterChars: 0 };
+  const messages = incoming.map((message, index) => {
+    if (typeof message.content !== "string") return message;
+    const lastUser = index === incoming.length - 1;
+    if (lastUser) {
+      const prepared = preparePrompt(message.content, vault);
+      meta = prepared;
+      return { role: message.role, content: prepared.text };
+    }
+    return { role: message.role, content: vault.tokenize(message.content).text };
+  });
+  if (!key) {
+    return { status: 200, body: { choices: [{ message: { role: "assistant", content: "" } }], needsKey: true, ...meta } };
+  }
+  const modelText = await callModel({
+    provider: "openai",
+    model: body.model || "gpt-4o-mini",
+    key,
+    messages,
+    fetchImpl,
+  });
   return {
     status: 200,
     body: {
-      answer,
-      hidden: prepared.types,
-      shortened: prepared.shortened,
-      beforeChars: prepared.beforeChars,
-      afterChars: prepared.afterChars,
-      tier: prepared.tier,
-      model,
+      choices: [{ message: { role: "assistant", content: finalizeForUser(modelText, vault) } }],
+      model: body.model || "gpt-4o-mini",
+      hidden: meta.types || meta.hidden,
+      shortened: meta.shortened,
+      beforeChars: meta.beforeChars,
+      afterChars: meta.afterChars,
     },
   };
 }
@@ -164,31 +208,23 @@ function readBody(req) {
 }
 
 export function createApp(env = runtimeEnv(), fetchImpl) {
-  const store = new Map();
   return createServer(async (req, res) => {
     try {
       const url = req.url || "/";
-      if (req.method === "GET" && (url === "/" || url === "/health")) {
-        const body = url === "/health" ? JSON.stringify({ ok: true }) : PAGE;
-        const type = url === "/health" ? "application/json" : "text/html; charset=utf-8";
-        res.writeHead(200, { "content-type": type });
-        res.end(body);
+      if (req.method === "GET" && url === "/health") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
         return;
       }
-      if (req.method !== "POST") {
+      if (req.method !== "POST" || !url.startsWith("/v1/chat/completions")) {
         res.writeHead(404, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: "not_found" }));
         return;
       }
       const body = await readBody(req);
-      const message = body.message || body.messages?.at?.(-1)?.content || body.text || "";
-      const result = await answerQuestion({
-        message,
-        sessionId: body.sessionId || req.headers["x-session-id"],
-        store,
-        env,
-        fetchImpl,
-      });
+      const header = req.headers.authorization || "";
+      const apiKey = header.startsWith("Bearer ") ? header.slice(7) : body.apiKey;
+      const result = await proxyChatCompletion({ body, apiKey, env, fetchImpl });
       res.writeHead(result.status, { "content-type": "application/json" });
       res.end(JSON.stringify(result.body));
     } catch {
@@ -202,6 +238,6 @@ const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv
 if (isMain) {
   const port = Number(process.env.PORT || 8787);
   createApp().listen(port, "127.0.0.1", () => {
-    process.stdout.write(`Open http://127.0.0.1:${port}\n`);
+    process.stdout.write(`Layer on http://127.0.0.1:${port}/v1\n`);
   });
 }

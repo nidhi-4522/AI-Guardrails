@@ -1,19 +1,19 @@
-# Trimble guard — Cursor test
+# Trimble guard
 
-Cursor does not shorten your message. It sends what you type. The middleware is the local page in this folder. The middleware shortens a long, repetitive message, hides sensitive data, and then calls the real model.
+You type in Cursor's normal chat box. There is no webpage.
+
+Cursor's before-prompt hook runs first, but Cursor does not let that hook change your text. The layer that does the work is this local server. Cursor sends the chat to it. The server shortens a long repeated prompt, hides an email, employee id, or password, calls the model, then puts the real values back in the answer you see.
 
 ## Where the folder goes
 
-Do not put this folder inside her other git project.
+Do not put this folder inside her other git project. Copy it anywhere, for example `Desktop\trimble-guard`. Open that folder in Cursor so the hook loads.
 
-Copy the folder anywhere, for example `Desktop\trimble-guard`. In Cursor, choose **File → Open Folder** and open **this** folder. The hooks in `.cursor` run only when this folder is the open window.
+## Set it once
 
-## What you need
-
-1. [Node.js 20 LTS](https://nodejs.org). Leave **Add to PATH** on. Restart Cursor after install.
-2. One model key for the middleware only. An OpenAI key from [platform.openai.com/api-keys](https://platform.openai.com/api-keys) is enough. Copy `.env.example` to `.env` and paste the key after `OPENAI_API_KEY=`. No spaces around `=`.
-
-The Cursor chat test uses the Cursor account you are already signed in with. It does not use the `.env` key.
+1. Install [Node.js 20 LTS](https://nodejs.org). Leave **Add to PATH** on.
+2. In this folder, run `node src/server.js`. Leave the window open.
+3. In Cursor, open **Settings → Models**. Turn on your OpenAI key. Set **Override OpenAI Base URL** to `http://127.0.0.1:8787/v1`.
+4. In the chat box, pick an OpenAI model. Auto and Composer do not go through this layer.
 
 ## Prompt A — long and repetitive
 
@@ -47,13 +47,11 @@ Do this in any Cursor chat. This folder does not have to be open.
 
 That number is the full prompt. Cursor sent every repeated line.
 
-### 2. Middleware, same prompt
+### 2. Same prompt, through the layer
 
-1. Open a terminal in this folder and run `node src/server.js`.
-2. Leave that window open. In a browser, open http://127.0.0.1:8787
-3. Paste Prompt A. Click **Ask**.
+Use the chat box again, with the base URL set and an OpenAI model selected. Paste Prompt A. Send it.
 
-The note should say the message was shortened, with a before and after character count. The model answers the short version. That is the smaller token use. Cursor’s own counter does not drop, because Cursor never sent the short text.
+The model receives the short version. The answer you see is still about the case. The smaller token count is on the OpenAI usage page. Cursor's own counter can still show the long prompt, because Cursor counted it before the layer.
 
 ## Prompt B — sensitive data
 
@@ -63,27 +61,17 @@ These values are fake. Do not replace them with a real password or a real custom
 Case 184392 owner is Maya Iyer, employee EMP-1842, maya.iyer@trimble.com. She reset the staging login and pasted it in chat: password=Staging-reset-04. Which queue should this case move to after the transfer?
 ```
 
-### In Cursor
+Paste Prompt B in the same Cursor chat box, with the base URL set. Send it.
 
-Open this folder in Cursor. Start a new chat. Paste Prompt B. Send it.
-
-Cursor blocks it. Cursor cannot hide the email, the employee id, or the password, so the hook stops the send. Start a new chat before you type anything else. A later message in the blocked chat can still carry the secret.
-
-### In the middleware
-
-Paste Prompt B on http://127.0.0.1:8787 and click **Ask**.
-
-The note should say an email, an employee id, and a password were hidden. The answer can still show those values to you. The model received placeholders, not the real values.
+The chat is not blocked. The model receives a placeholder for the email, the employee id, and the password. The answer you see can still show those values.
 
 ## If it fails
 
 | What you see | What to do |
 | --- | --- |
-| Middleware says add an API key | Fill in `.env`, save, and run `node src/server.js` again. |
-| The model company rejected the key | The key is wrong or has no credit. Start the window again after you fix it. |
-| The page cannot reach the guard | The black window is closed. Run `node src/server.js` again. |
-| Cursor did not block Prompt B | This folder is not the open window. Use **File → Open Folder** on this folder. |
-| Prompt B shows up again in Cursor | You stayed in the blocked chat. Start a new chat. |
+| The model company rejected the key | The key in Cursor's model settings is wrong, or it has no credit. |
+| The chat never hits the layer | The black window is closed, or the model is Auto or Composer. Run `node src/server.js` and pick an OpenAI model. |
+| Cursor says the guard failed closed | Close Cursor and open this folder again. The hook lets every prompt through. |
 | No token number on the Cursor reply | Open [cursor.com/dashboard](https://cursor.com/dashboard) and read the request size. |
 
 Do not commit the `.env` file. Do not put the API key in chat.

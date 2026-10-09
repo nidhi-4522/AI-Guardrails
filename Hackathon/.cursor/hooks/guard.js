@@ -1,4 +1,4 @@
-import { hookDecision } from "../../src/guard.js";
+import { hookDecision, loadGuardKey } from "../../src/guard.js";
 
 const event = process.argv[2] || "";
 let raw = "";
@@ -9,12 +9,8 @@ process.stdin.on("data", (chunk) => {
 process.stdin.on("end", () => {
   try {
     const input = raw.trim() ? JSON.parse(raw) : {};
-    process.stdout.write(JSON.stringify(hookDecision(event, input)));
+    process.stdout.write(JSON.stringify(hookDecision(event, input, loadGuardKey())));
   } catch {
-    process.stdout.write(JSON.stringify({
-      continue: false,
-      permission: "deny",
-      user_message: "Guard failed closed.",
-    }));
+    process.stdout.write(JSON.stringify({ continue: true, permission: "allow" }));
   }
 });

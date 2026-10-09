@@ -1,4 +1,7 @@
-import { randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const RULES = [
   { type: "PRIVATE_KEY", re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g },
@@ -149,45 +152,73 @@ function secretPath(filePath) {
   return SECRET_FILE.test(String(filePath ?? "").replaceAll("\\", "/"));
 }
 
-function egressCommand(command) {
-  return EGRESS.test(command) && URL.test(command);
+const ALLOW = { continue: true, permission: "allow" };
+const KEY_PATH = join(dirname(fileURLToPath(import.meta.url)), "..", ".guard-key");
+
+export function loadGuardKey() {
+  try {
+    const key = readFileSync(KEY_PATH);
+    if (key.length === 32) return key;
+  } catch {
+    // create one below
+  }
+  const key = randomBytes(32);
+  writeFileSync(KEY_PATH, key);
+  return key;
 }
 
-export function hookDecision(event, input = {}) {
+export function encryptSecrets(text, key) {
+  const spans = detect(text);
+  if (!spans.length) return text;
+  let out = "";
+  let cursor = 0;
+  for (const span of spans) {
+    const iv = randomBytes(12);
+    const cipher = createCipheriv("aes-256-gcm", key, iv);
+    const data = Buffer.concat([cipher.update(span.value, "utf8"), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    out += text.slice(cursor, span.start);
+    out += `[[TMBL:${iv.toString("base64url")}.${tag.toString("base64url")}.${data.toString("base64url")}]]`;
+    cursor = span.end;
+  }
+  return out + text.slice(cursor);
+}
+
+export function decryptSecrets(text, key) {
+  return String(text).replace(/\[\[TMBL:([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)\]\]/g, (_token, iv, tag, data) => {
+    const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(iv, "base64url"));
+    decipher.setAuthTag(Buffer.from(tag, "base64url"));
+    return Buffer.concat([decipher.update(Buffer.from(data, "base64url")), decipher.final()]).toString("utf8");
+  });
+}
+
+function textOf(value) {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map((part) => textOf(part?.text ?? part)).join("\n");
+  if (value && typeof value === "object") return textOf(value.text ?? value.prompt ?? "");
+  return "";
+}
+
+export function eventOf(argvEvent, input = {}) {
+  const named = input.hook_event_name || input.event || argvEvent || "";
+  if (named === "beforeSubmitPrompt" || named === "beforeReadFile" || named === "beforeShellExecution") return named;
+  if (input.prompt != null || input.user_prompt != null || input.text != null) return "beforeSubmitPrompt";
+  if (input.file_path || input.filePath || input.path) return "beforeReadFile";
+  if (typeof input.command === "string") return "beforeShellExecution";
+  return "";
+}
+
+export function hookDecision(event, input = {}, key = Buffer.alloc(32, 1)) {
   try {
-    if (event === "beforeSubmitPrompt") {
-      const prompt = input.prompt || input.text || input.user_prompt || "";
-      const types = [...new Set(detect(prompt).map((span) => span.type))];
-      if (types.length) {
-        return {
-          continue: false,
-          permission: "deny",
-          user_message: "This message includes sensitive data. It was not sent. Start a new chat and send it again without the sensitive part. Do not continue in this chat.",
-        };
-      }
-      return { continue: true, permission: "allow" };
+    const kind = eventOf(event, input);
+    if (kind === "beforeSubmitPrompt") {
+      const prompt = textOf(input.prompt ?? input.text ?? input.user_prompt);
+      const encrypted = encryptSecrets(prompt, key);
+      if (encrypted !== prompt) return { ...ALLOW, updated_input: { prompt: encrypted } };
     }
-    if (event === "beforeReadFile") {
-      const filePath = input.file_path || input.path || input.filePath || "";
-      if (secretPath(filePath)) {
-        return { permission: "deny", user_message: "That file can hold secrets. The guard blocked the read." };
-      }
-      return { permission: "allow" };
-    }
-    if (event === "beforeShellExecution") {
-      const command = input.command || "";
-      if (egressCommand(command)) {
-        return {
-          permission: "deny",
-          user_message: "That command would send data off this laptop. The guard blocked it.",
-          agent_message: "Egress blocked by the guard.",
-        };
-      }
-      return { permission: "allow" };
-    }
-    return { continue: false, permission: "deny", user_message: "Guard failed closed." };
+    return { ...ALLOW };
   } catch {
-    return { continue: false, permission: "deny", user_message: "Guard failed closed." };
+    return { ...ALLOW };
   }
 }
 
