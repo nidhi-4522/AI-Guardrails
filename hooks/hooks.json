@@ -3,19 +3,19 @@
   "hooks": {
     "beforeSubmitPrompt": [
       {
-        "command": "node .cursor/hooks/guard.js",
-        "failClosed": false
-      }
-    ],
-    "beforeReadFile": [
-      {
-        "command": "node .cursor/hooks/guard.js",
+        "command": "node hooks/guard.js",
         "failClosed": false
       }
     ],
     "beforeShellExecution": [
       {
-        "command": "node .cursor/hooks/guard.js",
+        "command": "node hooks/guard.js",
+        "failClosed": false
+      }
+    ],
+    "beforeMCPExecution": [
+      {
+        "command": "node hooks/guard.js",
         "failClosed": false
       }
     ]

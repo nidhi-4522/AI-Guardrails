@@ -1,4 +1,4 @@
-import { hookDecision, loadGuardKey } from "../../src/guard.js";
+import { hookDecision, loadGuardKey } from "../src/guard.js";
 
 const event = process.argv[2] || "";
 let raw = "";

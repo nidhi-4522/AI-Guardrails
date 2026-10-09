@@ -1,0 +1,7 @@
+.env
+node_modules/
+data/
+.guard-key
+guardrail_hook.log
+__pycache__/
+*.pyc

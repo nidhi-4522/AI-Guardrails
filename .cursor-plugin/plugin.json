@@ -1,0 +1,9 @@
+{
+  "name": "trimble-prompt-compiler",
+  "displayName": "Trimble Prompt Compiler",
+  "version": "0.1.0",
+  "description": "Keep job ids, hide people and secrets, auto-pick model, human-approve high-risk actions, sharp answers, signed receipts.",
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
+  "keywords": ["trimble", "privacy", "tokens", "guardrails"]
+}
