@@ -12,49 +12,53 @@ import { pickModel } from "../src/route.js";
 import { toSharp } from "../src/sharp.js";
 import { approveRequest, proxyChatCompletion } from "../src/server.js";
 
-const PROMPT_A = `Case 184392 is stuck after the Oracle order sync. The customer is Northline Civil. The order is 521184. Assets are still missing on the account, and their project manager is on site waiting. Should we wait for the next batch, or open a defect?
+const PROMPT_A = `JOB-4418 is stuck after the nightly build. The service is billing-api. The pipeline id is RUN-90211. The health check still fails, and the on-call engineer is waiting. Should we rerun the pipeline, or roll back?
 
-From Maya Iyer, 10:14: I retried the sync. The batch finished with no error on the order, but the asset list on the account is still empty. The customer called and said the equipment is not on the account.
+From Alex Chen, 10:14: I reran the pipeline. The job finished with no error, but the health check is still red. The dashboard shows the new build is not serving traffic.
 
-From Maya Iyer, 10:14: I retried the sync. The batch finished with no error on the order, but the asset list on the account is still empty. The customer called and said the equipment is not on the account.
+From Alex Chen, 10:14: I reran the pipeline. The job finished with no error, but the health check is still red. The dashboard shows the new build is not serving traffic.
 
-From Luis Ortega, 10:41: I checked the case feed. No entitlement row was created. The agent already tried refresh and sign out. Please tell us the next safe step for order 521184. The customer has called twice.
+From Priya Shah, 10:41: I checked the logs. No config row was written. The agent already tried a restart. Please tell us the next safe step for JOB-4418. The channel has pinged twice.
 
-From Luis Ortega, 10:41: I checked the case feed. No entitlement row was created. The agent already tried refresh and sign out. Please tell us the next safe step for order 521184. The customer has called twice.
+From Priya Shah, 10:41: I checked the logs. No config row was written. The agent already tried a restart. Please tell us the next safe step for JOB-4418. The channel has pinged twice.
 
-From Maya Iyer, 11:05: Pasting the last update again so you have it. Batch finished. No error. Assets still empty. Customer still waiting on the 3 pm call.
+From Alex Chen, 11:05: Pasting the last update again. Job finished. No error. Health check still red. Still waiting on the 3 pm review.
 
-From Maya Iyer, 11:05: Pasting the last update again so you have it. Batch finished. No error. Assets still empty. Customer still waiting on the 3 pm call.
+From Alex Chen, 11:05: Pasting the last update again. Job finished. No error. Health check still red. Still waiting on the 3 pm review.
 
-Case 184392 is stuck after the Oracle order sync. The customer is Northline Civil. The order is 521184. Assets are still missing on the account. Reply with the next step only.`;
+JOB-4418 is stuck after the nightly build. The service is billing-api. The pipeline id is RUN-90211. The health check still fails. Reply with the next step only.`;
 
-const PROMPT_B = "Case 184392 owner is Maya Iyer, employee EMP-1842, maya.iyer@trimble.com. She reset the staging login and pasted it in chat: password=Staging-reset-04. Which queue should this case move to after the transfer?";
+const PROMPT_B = "JOB-4418 owner is Alex Chen, employee EMP-1842, alex.chen@example.com. The staging login was pasted in chat: password=Staging-reset-04. A database string was pasted too: postgres://app:s3cret@db.internal:5432/app. A shared key was pasted too: sk-demoKeyValue1234. Which channel should this job move to after the handoff?";
 
-const PROMPT_C = "Re-push order 521184 to production and enable the entitlement for Northline Civil.";
+const PROMPT_C = "Re-push JOB-4418 to production.";
 
-test("Prompt A keeps case and order and shortens", () => {
+test("Prompt A keeps job and run ids and shortens", () => {
   const compiled = compilePrompt(PROMPT_A);
-  assert.equal(compiled.workItem, "CASE-184392");
-  assert.ok(compiled.kept.some((item) => item.kind === "ORDER" && item.value === "521184"));
+  assert.equal(compiled.workItem, "JOB-4418");
+  assert.ok(compiled.kept.some((item) => item.kind === "RUN" && item.value === "90211"));
   assert.equal(compiled.shortened, true);
   assert.ok(compiled.afterChars < compiled.beforeChars);
-  assert.equal(compiled.text.includes("184392"), true);
-  assert.equal(compiled.text.includes("521184"), true);
+  assert.equal(compiled.text.includes("JOB-4418"), true);
+  assert.equal(compiled.text.includes("RUN-90211"), true);
 });
 
-test("Prompt B hides secrets and keeps case", () => {
+test("Prompt B hides secrets and keeps job id", () => {
   const compiled = compilePrompt(PROMPT_B);
-  assert.equal(compiled.workItem, "CASE-184392");
+  assert.equal(compiled.workItem, "JOB-4418");
   assert.ok(compiled.hidden.includes("EMAIL"));
   assert.ok(compiled.hidden.includes("EMP_ID"));
   assert.ok(compiled.hidden.includes("PASSWORD"));
-  assert.equal(compiled.text.includes("maya.iyer@trimble.com"), false);
+  assert.ok(compiled.hidden.includes("CONN"));
+  assert.ok(compiled.hidden.includes("API_KEY"));
+  assert.equal(compiled.text.includes("alex.chen@example.com"), false);
   assert.equal(compiled.text.includes("Staging-reset-04"), false);
   assert.equal(compiled.text.includes("EMP-1842"), false);
+  assert.equal(compiled.text.includes("postgres://"), false);
+  assert.equal(compiled.text.includes("sk-demoKeyValue1234"), false);
 });
 
 test("auto route picks small or large, and carbon threshold diverts to small", () => {
-  const small = pickModel("What is the next step for Case 184392?");
+  const small = pickModel("What is the next step for JOB-4418?");
   assert.equal(small.tier, "small");
   const large = pickModel("Implement the billing migration and write the code.");
   assert.equal(large.tier, "large");
@@ -84,13 +88,13 @@ test("high-risk prompt is held then approved", async () => {
     env: {},
     fetchImpl: async (_url, options) => {
       called = true;
-      assert.equal(JSON.parse(options.body).messages.at(-1).content.includes("521184"), true);
-      return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: "Approved path ran for order 521184." } }] }) };
+      assert.equal(JSON.parse(options.body).messages.at(-1).content.includes("JOB-4418"), true);
+      return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: "Approved path ran for JOB-4418." } }] }) };
     },
   });
   assert.equal(called, true);
   assert.equal(approved.body.meta.approvedBy, "human");
-  assert.match(approved.body.choices[0].message.content, /521184/);
+  assert.match(approved.body.choices[0].message.content, /JOB-4418/);
 });
 
 test("hook asks on high-risk shell and allows a normal prompt", () => {
@@ -101,19 +105,19 @@ test("hook asks on high-risk shell and allows a normal prompt", () => {
   assert.equal(allow.permission, "allow");
 });
 
-test("sharp pass strips filler and keeps case id", () => {
-  const out = toSharp("Sure! I'd be happy to help. Please just really check Case 184392 next.");
+test("sharp pass strips filler and keeps job id", () => {
+  const out = toSharp("Sure! I'd be happy to help. Please just really check JOB-4418 next.");
   assert.equal(out.toLowerCase().includes("sure"), false);
-  assert.match(out, /184392/);
+  assert.match(out, /JOB-4418/);
 });
 
 test("receipt signs and verifies", () => {
   const dir = mkdtempSync(join(tmpdir(), "tmb-receipt-"));
   try {
     const key = loadHmacKey(dir);
-    const signed = signReceipt({ receiptId: "1", workItem: "CASE-1", hidden: ["EMAIL"] }, key);
+    const signed = signReceipt({ receiptId: "1", workItem: "JOB-1", hidden: ["EMAIL"] }, key);
     assert.equal(verifyReceipt(signed, key), true);
-    appendLedger(dir, { workItem: "CASE-1", tokens: 10, model: "gpt-4o-mini", tier: "small" });
+    appendLedger(dir, { workItem: "JOB-1", tokens: 10, model: "gpt-4o-mini", tier: "small" });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

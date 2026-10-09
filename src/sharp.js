@@ -1,5 +1,5 @@
 const FILLER = /\b(please|just|really|actually|basically|literally|certainly|simply|um+|uh+)\b/gi;
-const KEEP_ID = /\b(CASE-\d+|Case\s+\d+|ORDER-\d+|52\d{4,8}|EMP-\d+|\[\[TMBL_[^\]]+\]\])/g;
+const KEEP_ID = /\b(JOB-\d+|RUN-\d+|EMP-\d+|\[\[TMBL_[^\]]+\]\])/g;
 
 /** Local sharp pass: answer-first, terse, keep job ids. No second model call. */
 export function toSharp(text) {

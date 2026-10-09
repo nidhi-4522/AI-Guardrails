@@ -4,7 +4,6 @@ import { randomBytes } from "node:crypto";
 
 const PATTERNS = [
   { reason: "republish", re: /\b(re-?push|republish)\b/i },
-  { reason: "entitlement", re: /\b(enable|disable)\s+entitlement\b/i },
   { reason: "provision", re: /\b(de)?provision\b/i },
   { reason: "destructive_sql", re: /\b(drop\s+table|delete\s+from|truncate)\b/i },
   { reason: "destructive_fs", re: /\brm\s+-rf\b|Remove-Item\s+-Recurse/i },
