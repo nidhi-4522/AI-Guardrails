@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trimble guard</title>
+  <style>
+    body { margin: 0; font-family: Calibri, "Segoe UI", sans-serif; background: #0e3b4c; color: #fff; }
+    main { max-width: 720px; margin: 0 auto; padding: 32px 20px 48px; }
+    h1 { font-size: 32px; margin: 0 0 8px; }
+    p { line-height: 1.4; color: #d5e4ea; }
+    textarea { width: 100%; min-height: 140px; box-sizing: border-box; border: 0; border-radius: 8px; padding: 12px; font: 18px Calibri, sans-serif; }
+    button { margin-top: 12px; background: #e3b23c; color: #0e3b4c; border: 0; border-radius: 8px; padding: 12px 18px; font: 700 18px Calibri, sans-serif; cursor: pointer; }
+    #note, #answer { white-space: pre-wrap; background: #14586a; border-radius: 8px; padding: 14px; }
+    #answer { font-size: 18px; min-height: 48px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Trimble guard</h1>
+    <p>Type a normal question. A real model answers it. Emails, employee ids, and passwords are hidden on the way. A long or repetitive message is shortened before it is sent.</p>
+    <textarea id="box" placeholder="Say hello to jane.doe@trimble.com in one sentence."></textarea>
+    <button id="go" type="button">Ask</button>
+    <p id="note"></p>
+    <div id="answer"></div>
+  </main>
+  <script>
+    const box = document.querySelector("#box");
+    const note = document.querySelector("#note");
+    const answer = document.querySelector("#answer");
+    const button = document.querySelector("#go");
+    const sessionId = sessionStorage.getItem("guard-session") || crypto.randomUUID();
+    sessionStorage.setItem("guard-session", sessionId);
+
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      note.textContent = "Asking…";
+      answer.textContent = "";
+      try {
+        const response = await fetch("/ask", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ message: box.value, sessionId }),
+        });
+        const data = await response.json();
+        if (data.error) {
+          note.textContent = data.error;
+          return;
+        }
+        const bits = [];
+        if (data.hidden && data.hidden.length) bits.push("Hidden before the model saw it: " + data.hidden.join(", ") + ".");
+        if (data.shortened) bits.push("Shortened from " + data.beforeChars + " characters to " + data.afterChars + " before sending.");
+        if (!bits.length) bits.push("Sent as written. Nothing sensitive was found.");
+        note.textContent = bits.join(" ");
+        answer.textContent = data.answer;
+      } catch {
+        note.textContent = "The page could not reach the guard. Leave the black window open and try again.";
+      } finally {
+        button.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
